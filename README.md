@@ -1,3 +1,15 @@
+#python set proxy
+
+import urllib2  
+import sys  
+reload(sys)     
+sys.setdefaultencoding('utf-8')   
+proxy_handler = urllib2.ProxyHandler({'http' : 'http://id:password@proxy.xxxxx.com:port/'})  
+opener = urllib2.build_opener(proxy_handler);  
+urllib2.install_opener(opener) 
+
+
+
 # sparkproj
 
 spark config
