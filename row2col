@@ -1,0 +1,30 @@
+ // val list = sc.textFile("hdfs://10.136.90.232:9000/data/contentIDlist.csv")
+ val list = sc.textFile("contentIDlist.csv")
+  val listdata = list.filter(_.length>0).collect()
+  //listdata.collect.foreach(println)
+  val resultPosition = sc.broadcast(listdata)
+
+  //val vodData = sc.textFile("hdfs://10.136.90.232:9000/data/vodWatchTimes201506.csv.sorted")
+  val vodData = sc.textFile("vodWatchTimes201506.csv.sorted")
+  val vodDataCleaned = vodData.filter(_.length > 0).map(x =>{
+    val datas = x.split('|')
+    (datas(0), (datas(1), datas(2).toInt))
+  })
+
+
+  val processedData = vodDataCleaned.groupByKey().map( x => {
+    val dataMap = x._2.toSeq.toMap
+    val valueStr = resultPosition.value.map(x => dataMap.getOrElse(x,0)).mkString("|")
+    x._1 + "|" + valueStr
+  })
+
+  val outPath = "hdfs://10.136.90.232:9000/chengbo/"
+  val masterUrl = "hdfs://10.136.90.232:9000"
+ // val output = new org.apache.hadoop.fs.Path(outPath);
+  //val hdfs = org.apache.hadoop.fs.FileSystem.get(
+  //  new java.net.URI(masterUrl), new org.apache.hadoop.conf.Configuration())
+  // 删除输出目录
+  //if (hdfs.exists(output)) hdfs.delete(output, true)
+
+  processedData.saveAsTextFile("result")
+  //sc.parallelize(lists).saveAsTextFile("hdfs://10.136.90.232:9000/chengbo/listIndex")
