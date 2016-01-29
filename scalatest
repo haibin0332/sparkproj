@@ -1,5 +1,3 @@
-package pde.test
-
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.tree.DecisionTree
@@ -7,16 +5,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.scalatest._
-import pde.Instance
-import pde.lookalike.LookAlike
-import pde.lookalike.LookAlike._
-import pde.lookalike.MixedDistances.Embeddings.identityLK
-import pde.lookalike.MixedDistances._
-import pde.lookalike.NaiveDistance
-import pde.lookalike.Utils._
-import pde.LineParsers.makeEagerParser
-import pde.LineParsers.LookalikeTelecomDataset
-import pde.Metrics
 
 object LookAlikeTest {
   def oracle(i: Instance) = "4G".equals(i.allFeaturesAsStrings()(230))
