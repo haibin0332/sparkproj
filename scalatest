@@ -35,7 +35,7 @@ class LookAlikeTest extends FunSuite with BeforeAndAfterAll {
                               .setMaster("local[*]")
     context = new SparkContext(conf)
     val parser = pde.LineParsers.eagerTelecomParserForLookAlike
-    files = Array("09").map("/sample/2014" + _ + "_ordered_sample.txt")
+    files = Array("").map("" + _ + "")
                        .map(getClass.getResource(_).getPath())
                        .map(context.textFile(_)
                                    .map(parser.call(_))
@@ -75,48 +75,4 @@ class LookAlikeTest extends FunSuite with BeforeAndAfterAll {
       //assert(result(3).avgScore >= 0.00)
     }
   }
-
-  test("IntSet works") {
-    val v1 = Array(1, 1, 1, 1, 4, 7, 7, 9, 12, 14, 14, 14, 14)
-    val v2 = Array(0, 0, 4, 6, 8, 12, 12, 12)
-    val ints1 = new Metrics.IntSet(v1)
-    val ints2 = new Metrics.IntSet(v2)
-    val hs1 = v1.toSet
-    val hs2 = v2.toSet
-    assert(ints1.arr.deep == hs1.toArray.sorted.deep)
-    assert(ints2.arr.deep == hs2.toArray.sorted.deep)
-    assert((ints1 intersectionSize ints2) == (hs1 intersect hs2).size)
-    assert((ints1 unionSize ints2) == (hs1 union hs2).size)
-  }
-
-  test("autoencoder error tends to shrink") {
-    import pde.lookalike.Deep._
-    val rng = new scala.util.Random(0)
-    val input_size = 50
-    val hidden_size = 30
-    val iterations = 100
-    val sample_size = 10
-    var layer = AELayer(rng, input_size, hidden_size)
-    val inputs = Array.fill(sample_size)(array(Array.fill(input_size)(rng.nextDouble)))
-    val results = Array.ofDim[(Double, String)](iterations)
-    for (i <- 0 until iterations) {
-      val update = layer.computeDelta(inputs, rng, 0.2)
-      results(i) = (layer.error(inputs),
-                    "\tE: %.4e  W: %.4e  f: %.4e  b: %.4e  dW: %.4e  df: %.4e  db: %.4e"
-                    .format(layer.error(inputs),
-                            norm(layer.W),
-                            norm(layer.f),
-                            norm(layer.b),
-                            norm(update.W),
-                            norm(update.f),
-                            norm(update.b)))
-      layer = layer.applyDelta(update, 0.05)
-    }
-    assert(results.map(_._1).sliding(10, 1)
-                            .map(arr => arr.sum / arr.length)
-                            .sliding(2, 1)
-                            .forall(arr => arr(0) > arr(1)),
-           "\nError did not always shrink:\n" + results.map(_._2).mkString("\n"))
-  }
-
 }
