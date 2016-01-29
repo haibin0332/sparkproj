@@ -1,0 +1,122 @@
+package pde.test
+
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.tree.DecisionTree
+import org.apache.spark.rdd.RDD
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.scalatest._
+import pde.Instance
+import pde.lookalike.LookAlike
+import pde.lookalike.LookAlike._
+import pde.lookalike.MixedDistances.Embeddings.identityLK
+import pde.lookalike.MixedDistances._
+import pde.lookalike.NaiveDistance
+import pde.lookalike.Utils._
+import pde.LineParsers.makeEagerParser
+import pde.LineParsers.LookalikeTelecomDataset
+import pde.Metrics
+
+object LookAlikeTest {
+  def oracle(i: Instance) = "4G".equals(i.allFeaturesAsStrings()(230))
+  def not[T] = (f: T => Boolean) => (t: T) => !f(t)
+}
+
+class LookAlikeTest extends FunSuite with BeforeAndAfterAll {
+  import LookAlikeTest._
+  private var context: SparkContext = null
+  private var files: Array[(RDD[LKInstance], RDD[LKInstance])] = null
+
+  override def beforeAll {
+    val conf = new SparkConf().setAppName("canReadSampleFileThroughSpark")
+                              .set("spark.app.id", "test-look-alike")
+                              .set("spark.ui.showConsoleProgress", "false")
+                              .setMaster("local[*]")
+    context = new SparkContext(conf)
+    val parser = pde.LineParsers.eagerTelecomParserForLookAlike
+    files = Array("09").map("/sample/2014" + _ + "_ordered_sample.txt")
+                       .map(getClass.getResource(_).getPath())
+                       .map(context.textFile(_)
+                                   .map(parser.call(_))
+                                   .%(rdd => {
+                                     val converter = makeLKInstanceConverter(rdd)
+                                     (rdd.filter(not(oracle)).map(converter),
+                                      rdd.filter(oracle).map(converter))
+                                   }))
+  }
+
+  override def afterAll {
+    context.stop
+  }
+
+  test("basic LookAlike models run without error") {
+    val rng = new scala.util.Random(0)
+    val randomTrainer: Trainer[LKInstance] = Trainer("random", training_set => row => rng.nextDouble)
+    val decTreeTrainer: Trainer[LKInstance] = Trainer("dec-tree", training_set => {
+      val m = DecisionTree.trainRegressor(training_set.map(tuple => new LabeledPoint(if (tuple._2) 1.0 else 0.0,
+                                                                                     Vectors.dense(tuple._1.nums))),
+                                          Map[Int, Int](), "variance", 10, 32);
+      row => m.predict(Vectors.dense(row.nums))
+    })
+    //val distanceBasedDensityTrainer = DistanceBasedDensityLookaLike.get("density", new L2Distance());
+    val minEuclidTrainer = NaiveDistance.lk(Metrics.l2, Aggregator("min", ds => ds.min))
+    val trainers = Array(randomTrainer
+                        ,decTreeTrainer
+                        ,minEuclidTrainer
+                        //,distanceBasedDensityTrainer
+                        )
+
+    for((unknowns, positives) <- files) {
+      val result = LookAlike.run(unknowns, positives, 0, 4, Seq(EmbeddedTrainers(identityLK, trainers)))
+      assert(Math.abs(0.5 - result(0).avgScore) <= 4 * result(0).stddev)
+      assert(result(1).avgScore >= 0.55)
+      assert(result(2).avgScore >= 0.55)
+      //assert(result(3).avgScore >= 0.00)
+    }
+  }
+
+  test("IntSet works") {
+    val v1 = Array(1, 1, 1, 1, 4, 7, 7, 9, 12, 14, 14, 14, 14)
+    val v2 = Array(0, 0, 4, 6, 8, 12, 12, 12)
+    val ints1 = new Metrics.IntSet(v1)
+    val ints2 = new Metrics.IntSet(v2)
+    val hs1 = v1.toSet
+    val hs2 = v2.toSet
+    assert(ints1.arr.deep == hs1.toArray.sorted.deep)
+    assert(ints2.arr.deep == hs2.toArray.sorted.deep)
+    assert((ints1 intersectionSize ints2) == (hs1 intersect hs2).size)
+    assert((ints1 unionSize ints2) == (hs1 union hs2).size)
+  }
+
+  test("autoencoder error tends to shrink") {
+    import pde.lookalike.Deep._
+    val rng = new scala.util.Random(0)
+    val input_size = 50
+    val hidden_size = 30
+    val iterations = 100
+    val sample_size = 10
+    var layer = AELayer(rng, input_size, hidden_size)
+    val inputs = Array.fill(sample_size)(array(Array.fill(input_size)(rng.nextDouble)))
+    val results = Array.ofDim[(Double, String)](iterations)
+    for (i <- 0 until iterations) {
+      val update = layer.computeDelta(inputs, rng, 0.2)
+      results(i) = (layer.error(inputs),
+                    "\tE: %.4e  W: %.4e  f: %.4e  b: %.4e  dW: %.4e  df: %.4e  db: %.4e"
+                    .format(layer.error(inputs),
+                            norm(layer.W),
+                            norm(layer.f),
+                            norm(layer.b),
+                            norm(update.W),
+                            norm(update.f),
+                            norm(update.b)))
+      layer = layer.applyDelta(update, 0.05)
+    }
+    assert(results.map(_._1).sliding(10, 1)
+                            .map(arr => arr.sum / arr.length)
+                            .sliding(2, 1)
+                            .forall(arr => arr(0) > arr(1)),
+           "\nError did not always shrink:\n" + results.map(_._2).mkString("\n"))
+  }
+
+}
