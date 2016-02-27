@@ -42,3 +42,8 @@ val rdd=sc.textFile("hdfs://ubuntu:8020/user/hadoop/spark/test.input")
 
 revise pom.xml spark 1.3.0
 protobuf version 5.0.2 before make-distribution.sh
+
+
+
+
+http://blog.csdn.net/bluishglc/article/details/43956625
