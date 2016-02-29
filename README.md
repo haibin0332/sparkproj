@@ -47,3 +47,5 @@ protobuf version 5.0.2 before make-distribution.sh
 
 
 http://blog.csdn.net/bluishglc/article/details/43956625
+
+http://nerd-is.in/2013-09/scala-learning-higher-order-functions/
