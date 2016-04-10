@@ -51,3 +51,5 @@ http://blog.csdn.net/bluishglc/article/details/43956625
 http://nerd-is.in/2013-09/scala-learning-higher-order-functions/
 
 http://www.ibm.com/developerworks/cn/java/j-lo-funinscala3/
+
+http://www.jianshu.com/p/f92617d3095d
