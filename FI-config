@@ -32,3 +32,5 @@ chgrp -R (迭代执行) spark /文件夹
 chown -R Zhejiang(用户)
 
 spark-submit --class "helloworld.SparkMain.Main"(程序入口，主类名称) --master yarn-cluster(yarn-client) /home/Zhejiang/Helloworld.jar (jar包地址)
+
+spark-submit --class "com.huawei.universe.pde.run.CmdSubmit" --master yarn-cluster /home/Zhejiang/bigdata/pde-1.0-SNAPSHOT-jar-with-dependencies.jar  /home/Zhejiang/bigdata/process/pde_cluster.xml
