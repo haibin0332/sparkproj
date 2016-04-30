@@ -1,0 +1,34 @@
+添加新用户（例test1）：略
+切入用户：su - test1
+切入FI客户端：cd opt/hadoopclient/
+配置环境：source bigdata_env
+Kerbores认证：kinit Zhejiang（Zhejiang为FI上的用户） 密码：Zhejiang!123
+进入Spark客户端：cd Spark/
+启动集群模式的Spark shell：spark-shell --master yarn-client
+
+
+
+打包工程（连带所需的jar包一起）
+       
+<plugin>
+    <artifactId>maven-assembly-plugin</artifactId>
+         <configuration>
+                <archive>
+                     <manifest>
+                       <mainClass>com.huawei.universe.pde.run.CmdSubmit</mainClass>
+                     </manifest>
+                    </archive>
+                    <descriptorRefs>
+                      <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+        </configuration>
+</plugin>
+
+
+mvn assembly:assembly
+
+chgrp -R (迭代执行) spark /文件夹
+改变组
+chown -R Zhejiang(用户)
+
+spark-submit --class "helloworld.SparkMain.Main"(程序入口，主类名称) --master yarn-cluster(yarn-client) /home/Zhejiang/Helloworld.jar (jar包地址)
