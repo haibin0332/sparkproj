@@ -1,0 +1,13 @@
+在dataframe里改变行列，要把每一个行.toSeq
+结果再.toArray 可以取每一行
+   
+    val indexrddData=dataset.map(x=>x(idIndex)).distinct().count().toInt
+    //val aggrddData=dataset.groupBy(flagFieldValue).count().rdd
+    for (i <- 0 until indexrddData) {
+      val tempdf = dataset.rdd.map(row => {
+        val arr = row.toSeq.toArray
+        if (arr(idIndex).toString.toInt==i) {
+          arr(idIndex) = 1
+        } else arr(idIndex) = 0
+        Row.fromSeq(arr)
+      })
