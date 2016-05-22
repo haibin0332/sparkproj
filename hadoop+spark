@@ -1,0 +1,69 @@
+Windows下Hadoop2.2+Spark1.6单节点部署
+
+一、	主要目的
+为了能够在windows下部署单节点hadoop和spark。
+二、	安装Eclipse、JDK、Cygwin、Scala、Maven
+首先，在windows上安装eclipse (Mars) ，JDK (1.7+)和Cygwin，这部分超过了本文档的范围。
+从http://www.scala-lang.org/download/下载Scala并安装，我的安装目录是D:\scala。在环境变量中添加SCALA_HOME= D:\scala；在Path中添加“;D:\scala\bin”。根据文档《Maven3.3.3安装、配置与运行.docx》安装配置Maven 3.3.3。
+三、	安装Hadoop 2.2.0
+a)	下载Hadoop
+在https://archive.apache.org/dist/hadoop/core/下载hadoop压缩包程序，我们这里是下载的hadoop-2.2.0。将压缩包hadoop-2.2.0.tar.gz解压到本地指定的安装目录下，我们这里指定的目录是D:\hadoop-2.2.0。
+b)	设置环境变量并配置Hadoop
+在环境变量中添加HADOOP_HOME = D:\hadoop-2.2.0，在Path中添加“ ;%HADOOP_HOME%\bin”。
+进入D:\hadoop-2.2.0\etc\hadoop，配置hdfs-site.xml，mapred-site.xml，yarn-site.xml，core-site.xml，hadoop-env.cmd如下：
+hdfs-site.xml:
+mapred-site.xml:
+yarn-site.xml:
+
+core-site.xml
+hadoop-env.cmd: 根据安装的JDK的位置，在@echo off后添加JAVA_HOME位置。我的JDK安装位置是C:\Program Files\Java\jdk1.8.0_65，所以我设置如下。
+如果安装在64位系统的Program Files(x86)目录下，设置为C:\Progra~2\Java\jdk1.8.0_65。
+dfs目录创建： 新建文件夹目录D:\hadoop-2.2.0\data\dfs\namenode\和D:\hadoop-2.2.0\data\dfs\datanode\。
+ 
+格式化hdfs：打开cmd，运行“hdfs namenode –format”命令，输出如下图:
+ 
+c)	添加winutil.exe，hadoop.dll
+为了能够支持windows下远程连接hadoop集群，自动上传job，本机hadoop中还需要添加对应版本的连接程序。我们的hadoop版本是2.2.0，所以从https://github.com/srccodes/hadoop-common-2.2.0-bin中下载hadoop-common-2.2.0-bin-master\bin中文件，并覆盖本地hadoop安装目录D:\hadoop-2.2.0\bin中的文件，注意版本对应。
+d)	配置SSH免密码登录
+以管理员身份运行Cygwin，执行ssh-keygen命令生成密钥文件，如下图所示，输入：
+注意-t -P -f参数区分大小写。
+执行完ssh-keygen命令后，再执行下面命令，就可以生成authorized_keys文件了。
+然后执行exit命令，退出Cygwin窗口。
+再次打开Cygwin，执行命令：
+第一次执行该命令会有提示，输入yes后，回车即可。(参考http://www.cnblogs.com/kinglau/archive/2013/08/20/3270160.html)
+e)	安装配置hadoop-eclipse-plugin（可选）
+在https://github.com/winghc/hadoop2x-eclipse-plugin的release目录中下载插件hadoop-eclipse-kepler-plugin-2.2.0.jar放入eclipse\plugins目录下，注意插件版本和hadoop版本要对应，然后重启eclipse。
+在eclipse中打开window-preferences，在Hadoop Map/Reduce中设置本地hadoop的安装目录，我们这里是D:\hadoop-2.2.0。
+然后，打开window-show view-other，选择Map/Reduce Locations，在eclipse下方会出现hadoop配置视图，点击该视图右上角的小象图标来新建一个hadoop配置。在弹出的窗口中配置如下图，注意User name为你本地用户名：
+ 
+配置完成后，打开project explorer视图，即可看到DFS Locations树形文件夹，目前为空。
+四、	测试运行Hadoop
+运行D:\hadoop-2.2.0\sbin\start-all.cmd，会打开四个窗口，分别是namenode，datanode，resourcemanager，nodemanager四个组件的输出。在浏览器中输入http://localhost:8088，即可看到hadoop的运行界面。
+ 
+关闭hadoop可运行stop-all.cmd。
+如果只想启动YARN，可执行start-yarn.cmd命令。
+如果只想启动HDFS，可执行start-dfs.cmd命令。
+五、	安装Spark 1.6.0
+我们采用本地编译Spark的方式来对接本地hadoop版本。
+a)	下载Spark
+在http://spark.apache.org/downloads.html 下载spark源代码，我们这里是下载的1.6.0。
+ 
+将压缩包spark-1.6.0.tgz解压到本地指定的安装目录下，我们这里指定的目录是D:\ spark-1.6.0。
+b)	Build Spark
+根据http://spark.apache.org/docs/latest/building-spark.html构建spark。我们是在cmd中切换到目录D:\spark-1.6.0，并执行”mvn -Pyarn -Phadoop-2.2 -DskipTests clean package”，等待40分钟左右会构建成功。
+c)	设置Spark环境变量
+在环境变量中添加SPARK_HOME = D:\spark-1.6.0，在Path中添加“ ;D:\spark-1.6.0\bin”。
+六、	测试运行Spark
+在CMD中切入目录D:\spark-1.6.0\bin\，运行spark-shell.cmd，启动spark：
+ 
+通过简单的程序来测试。在该窗口中执行：
+输出如下：
+ 
+继续执行：
+输出如下：
+ 
+继续执行：
+输出如下：
+ 
+打开spark的web监控页面http://localhost:4040，可以看到刚刚的程序的执行记录：
+ 
