@@ -48,6 +48,17 @@
     )
     combinerdd
 
-
+scala 归一化 代码 先in.cache hold 在内存里 做归一化 unpersist
+    def doNormalize(in: RDD[DpInstance]): RDD[DpInstance] = {
+      val input = in.cache()
+      //计算每列的最大值和最小值
+      val max: Array[Double] = input.map(_.nums).reduce((a, b) => a.zip(b).map(d => Math.max(Math.abs(d._1), Math.abs(d._2))))
+      val result: RDD[DpInstance] = input.map(x => {
+        x.nums = x.nums.zip(max).map(pair => if (pair._2 == 0) pair._1 else pair._1 / pair._2)
+        x
+      })
+      input.unpersist(false)
+      result
+    }
 
 
