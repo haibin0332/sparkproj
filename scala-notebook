@@ -11,3 +11,43 @@
         } else arr(idIndex) = 0
         Row.fromSeq(arr)
       })
+      
+
+      原始一段求k近邻代码
+//      dsNorm.cartesian(targetNorm).filter(tuple => tuple._1.uid != tuple._2.uid).map( tuple =>
+//    //降低数据传输的量 将近邻的数据 数值型 类别型的数据都删除了
+//    (tuple._1.uid,
+//      (tuple._1, Array( (tuple._2.score, distance.distance(tuple._1, tuple._2)))))
+//  ).reduceByKey( (a: (DpInstance, Array[(Double, Double)]), b: (DpInstance, Array[(Double, Double)])) => {
+//    val currentId = a._1
+//    val merged: Array[(Double, Double)] = (a._2++b._2).sortBy(_._2)
+//    if (merged.length<k)
+//      (currentId, merged)
+//    else if (allAtKDistance)
+//      (currentId, merged.filter(_._2<=merged(k)._2))
+//    else
+//      (currentId, merged.take(k))
+//  }).values.map(x=> Neighbors(x._1, x._2.map(pair => (DpInstance("", "", pair._1, null, null), pair._2)).toSeq.toArray))
+
+修改后广播代码，适用机器间通信缓慢
+
+    val newtargetNorm=sc.broadcast(targetNorm.collect)
+
+    val newvalue = newtargetNorm.value
+    val combinerdd = dsNorm.map(x =>
+    {
+      val resultarr = new ArrayBuffer[(DpInstance,Double)]
+      for (i<- 0 until newvalue.length) {
+        val tmpdistance = distance.distance(x, newvalue(i))
+        resultarr.append((newvalue(i),tmpdistance))
+      }
+      val tmpresultarr=resultarr.sortBy(_._2).take(k).toArray
+      //topk
+      Neighbors(x,tmpresultarr)
+    }
+    )
+    combinerdd
+
+
+
+
