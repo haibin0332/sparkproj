@@ -11,7 +11,7 @@ array[(a, b)].groupBy(_._2)
 val data = List(("HomeWay","Male"),("XSDYM","Femail"),("Mr.Wang","Male"))
 val group1 = data.groupBy(_._2) 
 // group1 = Map("Male" -> List(("HomeWay","Male"),("Mr.Wang","Male")),"Female" -> List(("XSDYM","Femail"))
-
+//groupBy 可以看出是进行Map(A->B)操作
 
 val a = Map(1->2, 3->4)
 a.tolist 
