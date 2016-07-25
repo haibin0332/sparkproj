@@ -1,0 +1,20 @@
+def groupBy[K](f: (T) => K): Map[K, Array[T]]
+描述:
+将列表进行分组，分组的依据是应用f在元素上后产生的新元素。
+
+参数说明:
+K ：返回值map的key的类型。
+f ：分组依据的函数，其返回值作为最终返回值map的key。
+
+返回值: 分组后的map。
+array[(a, b)].groupBy(_._2)
+val data = List(("HomeWay","Male"),("XSDYM","Femail"),("Mr.Wang","Male"))
+val group1 = data.groupBy(_._2) 
+// group1 = Map("Male" -> List(("HomeWay","Male"),("Mr.Wang","Male")),"Female" -> List(("XSDYM","Femail"))
+
+
+val a = Map(1->2, 3->4)
+a.tolist 
+list((1, 2), (3, 4))
+scala> Map("a" -> 1, "b" -> 2)
+res0: scala.collection.immutable.Map[java.lang.String,Int] = Map((a,1), (b,2))
