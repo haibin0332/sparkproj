@@ -1,0 +1,9 @@
+def get_frequency():
+  in_path = r"C:\Users\j......."
+  freq = [0]*7
+  with open(in_path, 'r+') as fin:
+     for line in fin:
+         tokens = line.strip().split("|")
+         index = int(tokens[1])
+         freq[index] += 1
+     return freq
