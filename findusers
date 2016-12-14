@@ -392,16 +392,6 @@ object Lookthesame extends Logging with Serializable {
     val freqItemsetsFromTrain = getFreqItemsets(totalTransactions, minSupport, numPartition, filterSingleItem, minPatternNum, maxIterationNum, maxPatternNum)
     */
 
-    /*
-    //@@@@输出seedTransactions、totalTransactions做验证
-    val seedTransactionsContent = seedTransactions.map(x => x._1 + x._2.mkString(",")).collect.mkString("\n")
-    val fileOutputSeedTransactions = new File("D:/BigData/GroupInsight/siChuanUnion/dataInProcess/seedTransactions.txt")
-    fileOutputSeedTransactions.text = seedTransactionsContent
-
-    val totalTransactionsContent = totalTransactions.map(x => x._1 + x._2.mkString(",")).collect.mkString("\n")
-    val fileOutputTotalTransactions = new File("D:/BigData/GroupInsight/siChuanUnion/dataInProcess/totalTransactions.txt")
-    fileOutputTotalTransactions.text = totalTransactionsContent
-    */
 
     val (freqItemsetsFromSeed, freqItemsetsFromTotal, defaultSupport) = getFreqItemsets(seedTransactions, totalTransactions, minSupport, numPartition, filterSingleItem, minPatternNum, maxIterationNum, maxPatternNum)
 
