@@ -1,0 +1,167 @@
+import utils.DelimiterConvert
+import org.apache.spark.sql.{DataFrame, Row, SQLContext}
+import org.apache.spark.sql.types.StructType
+import scala.util.Try
+import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
+
+
+class Binning extends java.io.Serializable {
+  val sampleSize = 20000
+  var splits = 3
+  var binningInfo = Map.empty[Int, Array[Double]]
+  var fieldNames = Array.empty[String]
+
+  /**
+    * data binning
+    *
+    * @param dframe
+    * @return
+    */
+  def binning(sqlc: SQLContext, dframe: DataFrame, fieldsToBin: Array[String], splitsNum: Int): DataFrame = {
+    splits = if (splitsNum != 0) splitsNum else splits
+    fieldNames = dframe.columns
+    val binIndexes = fieldsToBin.map(binFieldName => fieldNames.indexOf(binFieldName))
+    binning(sqlc,dframe,binIndexes,splits)
+  }
+
+  def binning(sqlc: SQLContext, dframe: DataFrame, fieldIndexesToBin: Array[Int], splitsNum: Int): DataFrame = {
+    splits = if (splitsNum != 0) splitsNum else splits
+    fieldNames = dframe.columns
+    //生成数据
+    val data = dframe.rdd.map(_.toSeq.toArray.map(_.toString)).cache()
+
+    //抽样、等深分箱(每箱的数量一样)
+    val inputSize = data.count()
+    val sample = sampleSize.toLong.min(inputSize)
+    //由于采用等深分箱，每个分箱中样本的数量应相同。
+//    val number = (sample / splits).toDouble
+    val number = sample / splits
+    require(splits >= 2, s"Target splits should greater or equal 2")
+    val sampleData = data.sample(false, sample.toDouble / inputSize.toDouble)
+
+    val samplekv = sampleData.flatMap(row => {
+      fieldIndexesToBin.map(index => {
+        (index.toString + "@" + row(index), 1D)
+      }).toList
+    }).reduceByKey(_ + _)
+      .map(k => {
+        val arr = k._1.split("@")
+        (arr(0).toInt, (arr(1).toDouble, k._2))
+      }).groupByKey()
+
+    binningInfo = samplekv.filter(x => x._2.size > splits).map(filed => {
+      val dis = filed._2.toArray.sortWith(_._1 < _._1)
+      //array中存放切分点的位置，即某属性的若干个取值点。
+      val array = new ArrayBuffer[Double]()
+      //属性field的属性值集合dis中的属性值数量大于分箱的数量，需划分切分点。
+      //array第一个元素为属性的最小值
+      array.append(dis(0)._1)
+
+      //连续取值个数大于分箱数，进行等深分箱
+      var count = 0D
+      for (i <- 0 to dis.length - 2) {
+        //结束条件为array.size = splits - 1，即array中存放的切分点数量 = 分箱数量 - 1
+        //          if(array.size < splits - 1){
+        if (array.size < splits) {
+          count = count + dis(i)._2
+          if (((count < number) && ((count + dis(i + 1)._2) > number)) || (count >= number)) {
+            array.append((dis(i)._1 + dis(i + 1)._1) / 2)
+            count = 0D
+          }
+        }
+      }
+
+      //array最后一个元素为属性的最大值
+      array.append(dis(dis.length - 1)._1)
+
+      //binning()方法返回值形式：(属性field的索引，划分点数组)
+      (filed._1, array.toArray)
+    }).collectAsMap().toMap
+
+
+    //通过分箱信息转换数据
+    val dataBinning = data.map(row => {
+      var output = List[String]()
+      fieldNames.foreach(field => {
+        val index = fieldNames.indexOf(field)
+        if (fieldIndexesToBin.contains(index) && binningInfo.get(index)!=None) {
+          //连续值进行分箱
+          val splits = binningInfo.get(index).get
+          val binIdx = search(splits, row(index).toDouble)
+          //原地分箱：
+          output = output :+ binIdx.toString
+        }
+        else {
+          //原地分箱。
+          output = output :+ row(index)
+        }
+      })
+      output.toArray
+    })
+    val rowRDD2 = dataBinning.map(array => Row.fromSeq(array.toSeq))
+    val dataBinningDataFrame = sqlc.createDataFrame(rowRDD2, dframe.schema)
+    return dataBinningDataFrame
+  }
+
+  /**
+    * binary Search
+    *
+    * @param splits
+    * @param value
+    * @return
+    */
+  private def search(splits: Array[Double], value: Double): Int = {
+    //    if (value < splits.head) {
+    if (value < splits(1)) {
+      return 0
+    }
+    //    else if (value >= splits.last) {
+    else if (value >= splits(splits.length - 2)) {
+      //      return splits.length
+      return splits.length - 2
+    }
+    else {
+      //    for (i <- 0 to splits.length - 2) {
+      for (i <- 1 to splits.length - 3) {
+        if (value >= splits(i) && value < splits(i + 1)) {
+          //        return i + 1
+          return i
+        }
+      }
+    }
+
+    return 0
+  }
+
+  def binToInterval(item: String, delimiter: String): String = {
+    val itemArray = item.split(DelimiterConvert.getRegExDelimiter(delimiter))
+    val binIdString = itemArray(itemArray.length - 1)
+    if (toOptInt(binIdString)!=None) {
+      val fieldName = item.substring(0, item.length - binIdString.length - 1)
+      val binId = binIdString.toInt
+      val interval = binIdToInterval(fieldName, binId)
+      fieldName + delimiter + interval
+    } else {
+      item
+    }
+  }
+
+  def binIdToInterval(fieldName: String, binId: Int): String = {
+    val fieldIndex = fieldNames.indexOf(fieldName)
+    val array = binningInfo.get(fieldIndex)
+    if (array != None) {
+      val left = array.get(binId)
+      val right = array.get(binId + 1)
+      "[" + left.toString + "," + right.toString + "]"
+    } else {
+      binId.toString
+    }
+  }
+
+  def hasBin():Boolean = {
+    binningInfo.size>0
+  }
+
+  def toOptInt(s:String) = Try(s.toInt) toOption
+}
