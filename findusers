@@ -1,0 +1,786 @@
+//如何进入map()函数内部
+//frequentItems等的数据结构
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+
+import preprocess.Binning
+import org.apache.spark.Logging
+import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+import org.apache.spark.sql.Row
+import scopt.OptionParser
+
+import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
+import scala.util.Random
+import scala.util.control._
+
+//import org.apache.log4j.PropertyConfigurator
+import mllib.fpm.FPGrowth
+import utils.{AbstractParams, LineUtil, LoadUtils, _}
+import utils.RichFileUtil._
+import org.apache.commons.lang3.time.StopWatch
+import org.apache.hadoop.fs.Path
+import org.apache.log4j.{Level, Logger}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
+
+
+object Lookthesame extends Logging with Serializable {
+
+  case class Params(
+                     input: String = null,
+                     inputDelimiter: String = " ",
+                     userIDMetaData: String = "userid",
+                     labelMetaData: String = "label",
+                     schema: String = null,
+                     format: String = null,
+                     schemaPath: String = null,
+                     formatPath: String = null,
+                     testInput: String = null,
+                     output: String = null,
+                     patternOutput: String = null,
+                     //patternOutputDelimiter: String = '\1'.toString,
+                     hdfsMaster: String = "local",
+                     //sample: Double = 1.0,
+                     minSupport: Double = 0.01,
+                     minPatternNum: Int = 500,
+                     maxPatternNum: Int = 10000,
+                     numPartition: Int = 20,
+                     maxIterationNum: Int = 5,
+                     k: Int = -1,
+                     binNum: Int = 3,
+                     withExtendedInfoFlag: Boolean = false,
+                     filterSingleItemFlag: Boolean = true,
+//                     traitWeightFlag: Boolean = true,
+                     indexFeaturesFlag: Boolean = false) extends AbstractParams[Params]
+
+
+  def main(args: Array[String]) {
+    //设置调试信息
+    System.setProperty("hadoop.home.dir", "c:\\winutil\\")
+    Logger.getLogger("org.apache.spark").setLevel(Level.WARN)
+    Logger.getLogger("org.apache.sql").setLevel(Level.WARN)
+
+    val defaultParams = Params()
+    //@@@OptionParser[Params]("TraitWeight")类在哪里定义？
+    val parser = new OptionParser[Params]("TraitWeight") {
+      head("TraitWeight: group extending with seed customers.")
+//      opt[Double]("sample")
+//        .text(s"sample percent, default: ${defaultParams.sample}")
+//        .action((x, c) => c.copy(sample = x))
+      opt[Double]("minSupport")
+        .text(s"minimal support level, default: ${defaultParams.minSupport}")
+        .action((x, c) => c.copy(minSupport = x))
+      opt[Int]("minPatternNum")
+        .text(s"minimal number of frequent itemsets, default: ${defaultParams.minPatternNum}")
+        .action((x, c) => c.copy(minPatternNum = x))
+      opt[Int]("maxPatternNum")
+        .text(s"maximal number of frequent itemsets, default: ${defaultParams.maxPatternNum}")
+        .action((x, c) => c.copy(maxPatternNum = x))
+      opt[Int]("numPartition")
+        .text(s"number of partition, default: ${defaultParams.numPartition}")
+        .action((x, c) => c.copy(numPartition = x))
+      opt[Int]("binNum")
+        .text(s"bin number for each feature, default: ${defaultParams.binNum}")
+        .action((x, c) => c.copy(binNum = x))
+      opt[Int]("maxIterationNum")
+        .text(s"max iteration num of finding sufficient number of frequent itemsets, default: ${defaultParams.maxIterationNum}")
+        .action((x, c) => c.copy(maxIterationNum = x))
+      opt[Int]("k")
+        .text(s"maximal number of recommended users, default: ${defaultParams.k}")
+        .action((x, c) => c.copy(k = x))
+      opt[Boolean]("filterSingleItemFlag")
+        .text(s"whether filter frequent itemsets with only one single item, default: ${defaultParams.filterSingleItemFlag}")
+        .action((x, c) => c.copy(filterSingleItemFlag = x))
+      opt[Boolean]("withExtendedInfoFlag")
+        .text(s"whether output the list with extended info, default: ${defaultParams.withExtendedInfoFlag}")
+        .action((x, c) => c.copy(withExtendedInfoFlag = x))
+      opt[Boolean]("indexFeaturesFlag")
+        .text(s"whether index the features to speedup algorithms, default: ${defaultParams.indexFeaturesFlag}")
+        .action((x, c) => c.copy(indexFeaturesFlag = x))
+//      opt[Boolean]("traitWeightFlag")
+//        .text(s"whether tune the weight of frequent item sets, default: ${defaultParams.traitWeightFlag}")
+//        .action((x, c) => c.copy(traitWeightFlag = x))
+      opt[String]("hdfsMaster")
+        .text(s"master URL for hdfs, default: ${defaultParams.hdfsMaster}")
+        .action((x, c) => c.copy(hdfsMaster = x))
+      opt[String]("patternOutput")
+        .text(s"output path for frequent itemsets, default no output")
+        .action((x, c) => c.copy(patternOutput = x))
+      //      opt[String]("patternOutputDelimiter")
+      //        .text(s"output delimiter for frequent itemsets, if patternOutput is set, default:  ${defaultParams.patternOutputDelimiter}")
+      //        .action((x, c) => c.copy(patternOutputDelimiter = x))
+      opt[String]("schema")
+        .text(s"schema for the input")
+        .action((x, c) => c.copy(schema = x))
+      opt[String]("schemaPath")
+        .text(s"path of the schema for the input")
+        .action((x, c) => c.copy(schemaPath = x))
+      opt[String]("userIDMetaData")
+        .text(s"userID MetaData String in schema for the input, default: ${defaultParams.userIDMetaData}")
+        .action((x, c) => c.copy(userIDMetaData = x))
+      opt[String]("labelMetaData")
+        .text(s"label MetaData String in schema for the input, default: ${defaultParams.labelMetaData}")
+        .action((x, c) => c.copy(labelMetaData = x))
+      opt[String]("format")
+        .text(s"schema format for the input")
+        .action((x, c) => c.copy(format = x))
+      opt[String]("formatPath")
+        .text(s"path of the schema format for the input")
+        .action((x, c) => c.copy(formatPath = x))
+      opt[String]("inputDelimiter")
+        .text(s"input delimiter, default:  ${defaultParams.inputDelimiter}")
+        .action((x, c) => c.copy(inputDelimiter = x))
+      opt[String]("testInput")
+        .text(s"path of test data set")
+        .action((x, c) => c.copy(testInput = x))
+      opt[String]("input")
+        .text(s"path of input data set")
+        .required()
+        .action((x, c) => c.copy(input = x))
+      opt[String]("output")
+        .text(s"output path for recommended users")
+        .required()
+        .action((x, c) => c.copy(output = x))
+    }
+    parser.parse(args, defaultParams).map { params =>
+      run(params)
+    }.getOrElse {
+      sys.exit(1)
+    }
+  }
+
+  def run(params: Params) {
+    val timer = new StopWatch()
+    timer.start()
+    //    PropertyConfigurator.configure("log4j.properties")//加载log4j.properties文件
+
+    logWarning(s"TraitWeight start...")
+
+    val conf = new SparkConf().setAppName(s"TraitWeight with $params").setMaster(params.hdfsMaster)
+//    val conf = new SparkConf().setAppName(s"TraitWeight with $params")
+
+    //for local debug
+//    conf.setMaster("local")
+
+    val sc = new SparkContext(conf)
+    val sqlsc = new SQLContext(sc)
+
+    //是否调节权重
+    val traitWeightFlag = false
+
+    //读入各种参数
+    val sample = 1.0
+    val testDataPath = params.testInput
+    val binNum = params.binNum
+    val labelMetaData = params.labelMetaData
+    val maxPatternNum = params.maxPatternNum
+    val minSupport = params.minSupport
+    val numPartition = params.numPartition
+    val minPatternNum = params.minPatternNum
+    val maxIterationNum = params.maxIterationNum
+    val withExtendedInfo = params.withExtendedInfoFlag
+    val filterSingleItem = params.filterSingleItemFlag
+    //@@@indexFeatures: Boolean 作用？
+    val indexFeatures = params.indexFeaturesFlag
+    val patternOutputDelimiter = " "
+    //返回的预测用户数量
+    val k = params.k
+    val hdfsMaster = params.hdfsMaster
+    val delimiter = DelimiterConvert.getRegExDelimiter(params.inputDelimiter)
+    val isTest = if (testDataPath != null && testDataPath != "") {
+      true
+    } else {
+      false
+    }
+
+    //读入schema和format
+    var schema = params.schema
+    if (params.schema == null || params.schema.trim == "") {
+      if (params.schemaPath == null || params.schemaPath.trim == "") {
+        logError(s"No schema info is provided, exit")
+        return
+      } else {
+        schema = sc.textFile(params.schemaPath).collect.mkString(params.inputDelimiter)
+        logInfo(s"Load schema info [$schema] from ${params.schemaPath}")
+      }
+    }
+    //format存储属性值类型： index Label Numeric Category ……
+    var format = params.format
+    if (params.format == null || params.format.trim == "") {
+      if (params.formatPath == null || params.formatPath.trim == "") {
+        logWarning(s"No schema format info is provided")
+      } else {
+        format = sc.textFile(params.formatPath).collect.mkString(params.inputDelimiter)
+        logInfo(s"Load schema format info [$format] from ${params.formatPath}")
+      }
+    }
+
+    //加载数据
+    var inputDF = LoadUtils.getHdfsDF(sqlsc, schema, params.input, params.inputDelimiter, numPartition)
+
+    //    //分割训练集和测试集
+    //    val weights = new ArrayBuffer[Double]
+    //    weights.append(0.6)
+    //    weights.append(0.4)
+    //    val datas = inputDF.randomSplit(weights.toArray,(new Random()).nextLong())
+    //    datas(0).rdd.map(x=>x.toSeq.toArray.map(_.toString).mkString("|")).saveAsTextFile("data/train")
+    //    datas(1).rdd.map(x=>x.toSeq.toArray.map(_.toString).mkString("|")).saveAsTextFile("data/test")
+
+
+//    var testDFNum : Long = 0
+    logInfo(s"Load data from [${params.input}] with schema [$schema] and delimiter [${params.inputDelimiter}] and partition number [$numPartition] complete")
+    if (isTest) {
+      val testDF = LoadUtils.getHdfsDF(sqlsc, schema, testDataPath, params.inputDelimiter, numPartition)
+
+//      testDFNum = testDF.count()
+
+      //将测试集的标签置为0。
+      val test = testDF.rdd.map(x => {
+        val temp = x.toSeq.toArray.map(_.toString)
+        val ind = schema.split(delimiter).indexOf(labelMetaData)
+        val newTemp = temp.zipWithIndex.map(x => {
+          if (x._2 == ind) {
+            "0"
+          } else {
+            x._1
+          }
+        })
+        Row.fromSeq(newTemp.toSeq)
+      })
+      val newDF = sqlsc.createDataFrame(test, testDF.schema)
+      inputDF = inputDF.unionAll(newDF)
+//      inputDF = inputDF.unionAll(testDF)
+    }
+
+    //分箱
+    val binning = new Binning()
+    if (format != null && !format.equals("")) {
+      val featureNames = inputDF.columns
+      val exclusiveArray = new ArrayBuffer[String]()
+      exclusiveArray.append(params.userIDMetaData)
+      exclusiveArray.append(labelMetaData)
+      val featureToBin = getFeaturesToBin(featureNames, format.split(DelimiterConvert.getRegExDelimiter(params.inputDelimiter)), exclusiveArray.toArray)
+      //对inputDF中的数据进行分箱，分箱后的数据仍保存在inputDF中，替换原数据集。
+      inputDF = binning.binning(sqlsc, inputDF, featureToBin, binNum)
+      logInfo(s"Binning for columns [${featureToBin.mkString(delimiter)}] complete")
+    } else {
+      logInfo(s"No schema format info is provided, skip the binning step")
+    }
+
+    //计算卡方值，进行特征选择。
+    //TODO 输入参数中增加featureReservedNum: Int, maxpValue: Double。featureReservedNum 默认值为0， maxpValue 默认值为0.05。
+//    val featureSelect = new FeatureSelect()
+//    inputDF = featureSelect.featureSelect(inputDF, params.userIDMetaData, labelMetaData, 5, 0.05)
+
+
+    //拆出种子用户和未知用户集合，并去掉label
+    val seedUsers = inputDF.filter(inputDF(labelMetaData).equalTo(1)).drop(labelMetaData)
+    val testUsers = inputDF.filter(inputDF(labelMetaData).equalTo(0)).drop(labelMetaData)
+    val userIDIndex = seedUsers.schema.fieldIndex(params.userIDMetaData)
+    val featureNameArray = seedUsers.schema.filter(x => {
+      !x.name.equals(params.userIDMetaData)
+    }).toArray.map(x => x.name)
+    logInfo(s"Separate seed users and unknown users complete")
+
+    //@@@@对种子用户进行抽样
+    var transactions = seedUsers.rdd
+    if (math.abs(sample - 1.0) > 0.000001) {
+      transactions = transactions.sample(withReplacement = false, sample, Random.nextLong())
+      logInfo(s"Take sample from seed users complete")
+    }
+    val transactionNum = transactions.count
+    val testTransactionNum = testUsers.rdd.count
+    logInfo(s"Number of transactions of seed users: [$transactionNum]")
+
+    //@@@@对全量样本进行抽样，抽样数量为种子抽样数量的2倍。
+    var trainTransactions = inputDF.drop(labelMetaData).rdd
+//    if (math.abs(sample * 2 - 1.0) > 0.000001) {
+//      trainTransactions = trainTransactions.sample(withReplacement = false, sample * 2, Random.nextLong())
+//      logInfo(s"Take sample from train users complete")
+//    }
+    val trainTransactionsArray = trainTransactions.takeSample(withReplacement = false, transactionNum.toInt *2, Random.nextLong())
+    trainTransactions = sc.parallelize(trainTransactionsArray)
+    val trainTransactionsNum = trainTransactions.count
+
+
+
+    //将userid抽出，转为(userid,featureName:featureValue)
+    var seedTransactions = transactions.map(x => {
+      val temp = x.toSeq.toArray.map(_.toString)
+      val userid = temp(userIDIndex)
+      val buffer = new ArrayBuffer[String]()
+      for (ii <- temp.indices) {
+        if (ii != userIDIndex) {
+          buffer.append(temp(ii))
+        }
+      }
+      val features = buffer.toArray.zipWithIndex.map(y => {
+        featureNameArray(y._2).concat(":").concat(y._1)
+      })
+      (userid, features)
+    })
+    logInfo(s"Generate transactions for seed users complete")
+    var testTransactions = testUsers.rdd.map(x => {
+      val temp = x.toSeq.toArray.map(_.toString)
+      val userid = temp(userIDIndex)
+      val buffer = new ArrayBuffer[String]()
+      for (ii <- temp.indices) {
+        if (ii != userIDIndex) {
+          buffer.append(temp(ii))
+        }
+      }
+      val features = buffer.toArray.zipWithIndex.map(y => {
+        featureNameArray(y._2).concat(":").concat(y._1)
+      })
+      (userid, features)
+    })
+    logInfo(s"Generate transactions for unknown users complete")
+
+    //对从全量样本中抽出的样本集进行处理。
+    var totalTransactions = trainTransactions.map(x => {
+      val temp = x.toSeq.toArray.map(_.toString)
+      val userid = temp(userIDIndex)
+      val buffer = new ArrayBuffer[String]()
+      for (ii <- temp.indices) {
+        if (ii != userIDIndex) {
+          buffer.append(temp(ii))
+        }
+      }
+      val features = buffer.toArray.zipWithIndex.map(y => {
+        featureNameArray(y._2).concat(":").concat(y._1)
+      })
+      (userid, features)
+    })
+    logInfo(s"Generate transactions for train users complete")
+
+
+
+    //为featureName:featureValue建立索引，提升性能
+    //@@@如何建立索引？
+    var broadcastItemToIndex = Map.empty[String, String]
+    var broadcastIndexToItem = Map.empty[String, String]
+    if (indexFeatures) {
+      val seedFeatures = seedTransactions.map(_._2)
+      val testFeatures = testTransactions.map(_._2)
+      //
+      val totalFeatures = totalTransactions.map(_._2)
+
+
+      val map = seedFeatures.union(testFeatures).union(totalFeatures).flatMap(x => x).distinct.zipWithIndex
+      val broadcastMap = sc.broadcast(map.collect).value
+      broadcastItemToIndex = broadcastMap.map(x => (x._1, x._2.toString)).toMap
+      broadcastIndexToItem = broadcastMap.map(x => (x._2.toString, x._1)).toMap
+      seedTransactions = seedTransactions.map(x => {
+        (x._1, x._2.map(y => broadcastItemToIndex.getOrElse(y, "")))
+      })
+      testTransactions = testTransactions.map(x => {
+        (x._1, x._2.map(y => broadcastItemToIndex.getOrElse(y, "")))
+      })
+      totalTransactions = totalTransactions.map(x => {
+        (x._1, x._2.map(y => broadcastItemToIndex.getOrElse(y, "")))
+      })
+    }
+
+    /*
+    //获取种子集频繁项集
+    val freqItemsetsFromSeed = getFreqItemsets(seedTransactions, minSupport, numPartition, filterSingleItem, minPatternNum, maxIterationNum, maxPatternNum)
+
+    //获取全量样本频繁项集
+    val freqItemsetsFromTrain = getFreqItemsets(totalTransactions, minSupport, numPartition, filterSingleItem, minPatternNum, maxIterationNum, maxPatternNum)
+    */
+
+    /*
+    //@@@@输出seedTransactions、totalTransactions做验证
+    val seedTransactionsContent = seedTransactions.map(x => x._1 + x._2.mkString(",")).collect.mkString("\n")
+    val fileOutputSeedTransactions = new File("D:/BigData/GroupInsight/siChuanUnion/dataInProcess/seedTransactions.txt")
+    fileOutputSeedTransactions.text = seedTransactionsContent
+
+    val totalTransactionsContent = totalTransactions.map(x => x._1 + x._2.mkString(",")).collect.mkString("\n")
+    val fileOutputTotalTransactions = new File("D:/BigData/GroupInsight/siChuanUnion/dataInProcess/totalTransactions.txt")
+    fileOutputTotalTransactions.text = totalTransactionsContent
+    */
+
+    val (freqItemsetsFromSeed, freqItemsetsFromTotal, defaultSupport) = getFreqItemsets(seedTransactions, totalTransactions, minSupport, numPartition, filterSingleItem, minPatternNum, maxIterationNum, maxPatternNum)
+
+    /*
+    //@@@@输出freqItemsetsFromSeed、freqItemsetsFromTotal、defaultSupport做验证
+    val freqItemsetsFromSeedContent = freqItemsetsFromSeed.map(itemset => {itemset.items.sorted.mkString(",") + " " + itemset.freq}).collect().mkString("\n")
+    val fileOutputFreqItemsetsFromSeed = new File("D:/BigData/GroupInsight/siChuanUnion/dataInProcess/freqItemsetsFromSeed.txt")
+    fileOutputFreqItemsetsFromSeed.text = freqItemsetsFromSeedContent
+
+    val freqItemsetsFromTotalContent = freqItemsetsFromTotal.map(itemset => {itemset.items.sorted.mkString(",") + " " + itemset.freq}).collect().mkString("\n")
+    val fileOutputFreqItemsetsFromTotal = new File("D:/BigData/GroupInsight/siChuanUnion/dataInProcess/freqItemsetsFromTotal.txt")
+    fileOutputFreqItemsetsFromTotal.text = freqItemsetsFromTotalContent
+    */
+
+    /*
+    println("defaultSupport: " + defaultSupport)
+    */
+
+
+    //根据种子频繁项集和全量样本频繁项集，获得最终频繁项集，并计算最终频繁项集各频繁项的权重。
+    val freqItemsetWeightsCaculate = new FreqItemsWeightsCalculate()
+    //需传入种子频繁项、全集频繁项数量。
+    //delimiter ?
+    var freqItemsets = freqItemsetWeightsCaculate.freqItemsWeights(freqItemsetsFromSeed, freqItemsetsFromTotal, transactionNum, trainTransactionsNum, params.inputDelimiter, defaultSupport)
+    //无需传入种子频繁项、全集频繁项数量。
+//    var freqItemsets = freqItemsetWeightsCaculate.freqItemsWeights(freqItemsetsFromSeed, freqItemsetsFromTotal, " ", defaultSupport)
+
+    /*
+    *freqItemsetWeightsCaculate.freqItemsWeights()中已对合并后的频繁项排过序。
+    //按权重对频繁项进行排序
+    freqItemsets = freqItemsets.sortBy(_._2, ascending = false)
+    logInfo(s"Sort frequent itemsets by frequency complete")
+    */
+
+    //按支持度对频繁项进行排序
+    //已在FreqItemsWeightsCalculate.scala的freqItemsWeights()方法的最后实现。
+
+    //截取固定数量的pattern
+    if (freqItemsets.count() >= maxPatternNum) {
+      //截取生成的频繁项，保留params.maxPatternNum个
+      freqItemsets = freqItemsets.zipWithIndex.filter(_._2 <= maxPatternNum - 1).map(_._1)
+    }
+
+    //广播所有的频繁项
+    val broadcastfreqItemsets = sc.broadcast(freqItemsets.collect).value
+
+    //对未知用户进行频繁项匹配，并按需求保存满足的频繁项
+    val predictResults = predictWithPatterns(sc, testTransactions, broadcastfreqItemsets, delimiter, withExtendedInfo, -1, traitWeightFlag) //频繁度不归一化，权重按频繁项长度递增
+    //    val predictResults = predictWithPatterns(sc, testTransactions, broadcastfreqItemsets, withExtendedInfo, transactionNum, traitWeightFlag)//频繁度归一化，权重都是1
+    logInfo(s"Predict unknown users complete")
+
+    //对用户按打分排序，截取前k个
+    val sortedUsers = if (k > 0) {
+      logInfo(s"Sort unknown users with scores and take top [$k] recommended users complete")
+      predictResults.sortBy(_._2, ascending = false).zipWithIndex.filter(_._2 <= k - 1).map(_._1)
+
+    } else {
+      predictResults.sortBy(_._2, ascending = false)
+    }
+    val sortedUsersNum = sortedUsers.count
+    logInfo(s"Sort unknown users with scores: [$sortedUsersNum]")
+
+    //如果前面为featureName:featureValue建立了索引，这里要对输出的频繁项和用户满足的频繁项进行反向索引
+
+    //输出推荐用户
+    outputRecomendUsers(params,binning,sortedUsers,indexFeatures,broadcastIndexToItem, patternOutputDelimiter, withExtendedInfo)
+
+    //AUC评估
+    evaluationAUC(isTest, sqlsc, schema, testDataPath, params, numPartition, labelMetaData, predictResults)
+
+    logInfo(s"TraitWeight complete in time: [${timer.getTime} ms]")
+    sc.stop()
+  }
+
+  def evaluationAUC(isTest: Boolean, sqlsc: SQLContext, schema: String, testDataPath: String, params: Params, numPartition: Int, labelMetaData: String, predictResults: RDD[(String, Double, Array[(String, Double)])]): Unit ={
+    //Evaluation with AUC
+    if (isTest) {
+      val testDF = LoadUtils.getHdfsDF(sqlsc, schema, testDataPath, params.inputDelimiter, numPartition)
+      val testTuple = testDF.select(params.userIDMetaData, labelMetaData).rdd.map(_.toSeq.toArray.map(_.toString)).map(x => (x(0), x(1).toDouble))
+      //aucData:(预测标签，实际标签)
+      val aucData = testTuple.join(predictResults.map(x => (x._1, x._2))).map(x => (x._2._2, x._2._1))
+      //      aucData.map(x=>x._1+" "+x._2).saveAsTextFile("hdfs://hacluster/user/yyl/aucdata")
+//      logInfo("AUC input size: " + aucData.count)
+//      logInfo(s"AUC input size: [${aucData.count}]")
+      //抽取打分数据和label数据，计算AUC值
+      val metrics = new BinaryClassificationMetrics(aucData)
+      val raw_score = metrics.areaUnderROC
+      println("AUC score: " + raw_score)
+//      logInfo("AUC score: " + raw_score)
+//      logInfo(s"AUC score: [${raw_score}]")
+      val best = metrics.fMeasureByThreshold().max()(Ordering.fromLessThan[(Double, Double)](_._2 < _._2))
+      println(s"Best f-measure threshold [${best._1}] with best f-measure [${best._2}]")
+//      logInfo(s"Best f-measure threshold [${best._1}] with best f-measure [${best._2}]")
+    }
+  }
+
+
+  def outputRecomendUsers(params: Params,binning: Binning,sortedUsers: RDD[(String, Double, Array[(String, Double)])],indexFeatures: Boolean,broadcastIndexToItem: Map[String, String], patternOutputDelimiter: String, withExtendedInfo: Boolean): Unit = {
+    val delimiter = DelimiterConvert.getRegExDelimiter(params.inputDelimiter)
+    //输出推荐用户，同时按需求输出满足的pattern
+    if (params.output != null && params.output != "") {
+      if (!params.output.startsWith("hdfs")) {
+        val outContent = if (withExtendedInfo) {
+          if (binning.hasBin()) {
+            if (indexFeatures) {
+              //sortedUsers: RDD[(userId, score, (freqItemset1, freqItemset2, ……))] -> RDD[('user56', "549.0", ((items, freq), (items, freq), ……))]
+              sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).map(z => {
+                val item = broadcastIndexToItem.getOrElse(z, "")
+                binning.binToInterval(item, ":")
+              }).mkString("+") + "(" + y._2 + ")").mkString(",")).collect.mkString("\n")
+            } else {
+              sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).map(z => {
+                binning.binToInterval(z, ":")
+              }).mkString("+") + "(" + y._2 + ")").mkString(",")).collect.mkString("\n")
+            }
+          } else {
+            //没有分箱
+            if (indexFeatures) {
+              sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).map(broadcastIndexToItem.getOrElse(_, "")).mkString("+") + "(" + y._2 + ")").mkString(",")).collect.mkString("\n")
+            } else {
+              sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).mkString("+") + "(" + y._2 + ")").mkString(",")).collect.mkString("\n")
+            }
+          }
+          //@@@（前2中情况分别是是否分箱，）第3种可能情况是什么？ 不需要输出pattern
+        } else {
+          sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2).collect.mkString("\n")
+        }
+        val folder = new File(params.output + "/")
+        if (!folder.exists()) {
+          folder.mkdir()
+        }
+        val fileOutput = new File(params.output + "/recommendedUsers" + getNowDate + ".txt")
+        fileOutput.text = outContent
+      } else {
+        val hdfs = org.apache.hadoop.fs.FileSystem.get(
+          new java.net.URI(params.hdfsMaster), new org.apache.hadoop.conf.Configuration())
+        if (hdfs.exists(new Path(params.output)))
+          hdfs.delete(new Path(params.output), true) // 删除输出目录
+        val outContent = if (withExtendedInfo) {
+            if (binning.hasBin()) {
+              if (indexFeatures) {
+                sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).map(z => {
+                  val item = broadcastIndexToItem.getOrElse(z, "")
+                  binning.binToInterval(item, ":")
+                }).mkString("+") + "(" + y._2 + ")").mkString(","))
+              } else {
+                sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).map(z => {
+                  binning.binToInterval(z, ":")
+                }).mkString("+") + "(" + y._2 + ")").mkString(","))
+              }
+            } else {
+              //没有分箱
+              if (indexFeatures) {
+                sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).map(broadcastIndexToItem.getOrElse(_, "")).mkString("+") + "(" + y._2 + ")").mkString(","))
+              } else {
+                sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2 + patternOutputDelimiter + x._3.map(y => y._1.split(delimiter).mkString("+") + "(" + y._2 + ")").mkString(","))
+              }
+            }
+          } else {
+            sortedUsers.map(x => x._1 + patternOutputDelimiter + x._2)
+          }
+        outContent.saveAsTextFile(params.output)
+      }
+      logInfo(s"Output recommended users to path [${params.output}] complete")
+    } else {
+      logError("No output path is provided for recommended users, no data is printed")
+    }
+  }
+
+
+  def getFreqItemsets(seedTransactions: RDD[(String, Array[String])], totalTransactions: RDD[(String, Array[String])], minSupport: Double, numPartition: Int, filterSingleItem: Boolean, minPatternNum: Int, maxIterationNum: Int, maxPatternNum: Int ): (RDD[FPGrowth.FreqItemset[String]], RDD[FPGrowth.FreqItemset[String]], Double) = {
+    //生成种子频繁项
+    val seedFeatures = seedTransactions.map(_._2).cache
+    var seedFreqItemsets = generateFrequentPatterns(seedFeatures, minSupport, numPartition, filterSingleItem)
+    var seedFreqItemsetsNum = seedFreqItemsets.count
+
+    //生成全量频繁项
+    val totalFeatures = totalTransactions.map(_._2).cache
+    var totalFreqItemsets = generateFrequentPatterns(totalFeatures, minSupport, numPartition, filterSingleItem)
+    var totalFreqItemsetsNum = totalFreqItemsets.count
+
+    logInfo(s"Generate frequent itemsets with minSupport: [$minSupport] complete")
+    logInfo(s"Number of frequent itemsets: [$seedFreqItemsetsNum]")
+    logInfo(s"Number of frequent itemsets: [$totalFreqItemsetsNum]")
+
+
+    //如果数量不足，迭代多次调低support重新生成频繁项
+    var iterationNum = 0
+    var support = minSupport
+    //minPatternNum: 最小频繁项（或规则）的条数
+    while ((seedFreqItemsetsNum < minPatternNum || totalFreqItemsetsNum < minPatternNum) && iterationNum < maxIterationNum) {
+      logInfo(s"Number of frequent itemsets is not sufficient, start the iteration to get more frequent itemsets")
+      support = support * 0.5
+      logDebug(s"[${iterationNum + 1}/$maxIterationNum]: MinSupport change to [$support]")
+
+      seedFreqItemsets = generateFrequentPatterns(seedFeatures, support, numPartition, filterSingleItem)
+      totalFreqItemsets = generateFrequentPatterns(totalFeatures, support, numPartition, filterSingleItem)
+
+      seedFreqItemsetsNum = seedFreqItemsets.count
+      totalFreqItemsetsNum = totalFreqItemsets.count
+
+      logDebug(s"[${iterationNum + 1}/$maxIterationNum]: Number of seed frequent itemsets: $seedFreqItemsetsNum , Number of total frequent itemsets: $totalFreqItemsetsNum")
+
+      iterationNum = iterationNum + 1
+    }
+    if (iterationNum == maxIterationNum) {
+      logWarning(s"Iteration number exceed maximal iteration number: [$maxIterationNum] with seed frequent itemsets number: [$seedFreqItemsetsNum], total frequent itemsets number: [$totalFreqItemsetsNum] in the last iteration")
+    }
+    seedFeatures.unpersist()
+    totalFeatures.unpersist()
+
+    //对频繁项按频繁度排序
+    seedFreqItemsets = seedFreqItemsets.sortBy(_.freq, ascending = false)
+    totalFreqItemsets = totalFreqItemsets.sortBy(_.freq, ascending = false)
+    logInfo(s"Sort frequent itemsets by frequency complete")
+
+
+    (seedFreqItemsets,totalFreqItemsets, support)
+  }
+
+
+
+  /**
+    * 获得当天的日期
+    *
+    * @return
+    */
+  def getNowDate: String = {
+    val now: Date = new Date()
+    val dateFormat: SimpleDateFormat = new SimpleDateFormat("yyyyMMdd")
+    val newForm = dateFormat.format(now)
+    newForm
+  }
+
+  /**
+    * 从schema中获得userID所在的列数
+    *
+    * @param userIDMetaData 用户id标识
+    * @param schema         数据schema
+    * @param delimiter      数据schema分隔符
+    * @return
+    */
+  def getUserIDIndex(userIDMetaData: String, schema: String, delimiter: String): Int = {
+    var index = -1
+    val array = LineUtil.LineSplit.split(schema, delimiter)
+    val loop = new Breaks
+    loop.breakable {
+      for (ind <- 0 to array.length) {
+        if (array(ind).equals(userIDMetaData)) {
+          index = ind
+          loop.break
+        }
+      }
+    }
+    index
+  }
+
+  /**
+    * 生成频繁项
+    *
+    * @param features     用户特征数据
+    * @param minSupport   最小支持度
+    * @param numPartition Partition数量
+    * @return
+    */
+  def generateFrequentPatterns(features: RDD[Array[String]], minSupport: Double, numPartition: Int, filterSingleItem: Boolean): RDD[FPGrowth.FreqItemset[String]] = {
+    val model = new FPGrowth()
+      .setMinSupport(minSupport)
+      .setNumPartitions(features.partitions.length)
+      .run(features)
+    //过滤频繁项中的单项
+    val freqItemsets = if (filterSingleItem) {
+      model.freqItemsets.filter(x => x.items.length > 1)
+    } else {
+      model.freqItemsets
+    }
+    freqItemsets
+  }
+
+  /**
+    * 判断集合features中是否包含集合items
+    *
+    * @param features 用户特征列表
+    * @param items    频繁项
+    * @return
+    */
+  def containItemsets(features: mutable.HashSet[String], items: Array[String]): Boolean = {
+    var flag = true
+    val loop = new Breaks
+    loop.breakable {
+      for (i <- items.indices) {
+        if (!features.contains(items(i))) {
+          flag = false
+          loop.break
+        }
+      }
+    }
+    flag
+  }
+
+  /**
+    * 对未知用户打分
+    *
+    * @param sc               SparkContext
+    * @param testTransactions 测试数据输入
+    * @param freqItemsets     频繁项
+    * @param withExtendedInfo 是否输出用户满足的频繁项
+    * @param transactionNum   对频繁度归一化为支持度
+    * @param tuneWeight       是否按频繁项的数量调节权重
+    * @return
+    */
+
+  def predictWithPatterns(sc: SparkContext, testTransactions: RDD[(String, Array[String])], freqItemsets: Array[(String, Double)], delimiter: String, withExtendedInfo: Boolean, transactionNum: Long, tuneWeight: Boolean): RDD[(String, Double, Array[(String, Double)])] = {
+    val recommendUsersWithScore = testTransactions.map(x => {
+      val userID = x._1
+      val features = new mutable.HashSet[String]
+      x._2.foreach(x => features.add(x))
+      var score = 0.0
+      //@@@当withExtendedInfo为true时，需要输出频繁模式，hasPattern用于记录频繁模式。
+//      val hasPattern = new ArrayBuffer[FPGrowth.FreqItemset[String]]()
+      val hasPattern = new ArrayBuffer[(String, Double)]()
+      //遍历每个频繁项，看当前用户是否包含该频繁项
+      freqItemsets.foreach(fp => {
+        val items = fp._1.split(delimiter)
+        if (containItemsets(features, items)) {
+          //withExtendedInfo: 是否需要额外输出频繁模式，true:需要输出
+          if (withExtendedInfo) {
+            //输出打分的同时，需要输出该用户具有哪些频繁模式
+            //hasPattern记录频繁模式
+            hasPattern.append(fp)
+          }
+
+          //@@@计算打分？
+          val tempScore = if (transactionNum > 0) {
+            if (tuneWeight) {
+              fp._2 * 1.0 * Math.log10(1 + items.length) / transactionNum
+            } else {
+              fp._2 * 1.0 / transactionNum
+            }
+          } else {
+            if (tuneWeight) {
+              fp._2 * 1.0 * Math.log10(1 + items.length)
+            } else {
+              fp._2 * 1.0
+            }
+          }
+          //累加打分
+          score = score + tempScore
+        }
+      })
+      (userID, score, hasPattern.toArray)
+    })
+    recommendUsersWithScore
+  }
+
+
+  /**
+    * 获得需要进行分箱的featureName
+    *
+    * @param featureNames 所有的featureName
+    * @param formatArray  featureName对应的format
+    * @param excludeNames 需要排除的featureName
+    * @return
+    */
+  def getFeaturesToBin(featureNames: Array[String], formatArray: Array[String], excludeNames: Array[String]): Array[String] = {
+    val exclusiveTypes = new ArrayBuffer[String]()
+    //不需要分箱的数据类型
+    exclusiveTypes.append("index")
+    exclusiveTypes.append("label")
+    exclusiveTypes.append("category")
+    exclusiveTypes.append("date")
+    val exclusiveArray = exclusiveTypes.toArray
+    var featureTuple = featureNames.zip(formatArray)
+    featureTuple = featureTuple.filter(x => {
+      !excludeNames.map(y => y.toLowerCase).contains(x._1.toLowerCase)
+    }).filter(x => {
+      val format = x._2
+      !exclusiveArray.contains(format.toLowerCase)
+    })
+    featureTuple.map(_._1)
+  }
+}
