@@ -1,0 +1,195 @@
+object LineUtil {
+  object LineSplit {
+    /**
+     * 对字符窜进行分割，对分隔符号进行转义
+     * @param line
+     * @param delimiter
+     * @param limit
+     * @return
+     */
+    def split(line: String, delimiter: String, limit: Int = -1): Array[String] = {
+      if (line == null) {
+        return null
+      }
+      if (delimiter == null) {
+        val array = new Array[String](1)
+        array(0) = line
+        return array
+      }
+      val regex = DelimiterConvert.getRegExDelimiter(delimiter)
+      return line.split(regex, limit)
+    }
+  }
+}
+
+
+object LoadUtils {
+  /**
+    * 获取hdfs 文件
+    *
+    * @param sqlc sqlcontext
+    * @return 获取到的dataframe
+    */
+  def getHdfsDF(sqlc: SQLContext, metaData: String, dataPath: String, seprator: String, numPartition: Int): DataFrame = {
+    val metaDataArray = metaData.split(DelimiterConvert.getRegExDelimiter(seprator))
+    val dataIn = sqlc.sparkContext.textFile(dataPath, numPartition).map(str => LineUtil.LineSplit.split(str, seprator, metaDataArray.length)).filter(_.length == metaDataArray.length).map(arr => Row.fromSeq(arr))
+    val schema: StructType = StructType(metaDataArray.map(x => StructField(x, StringType, true)))
+    val df = sqlc.createDataFrame(dataIn, schema)
+    return df
+  }
+}
+
+
+
+import java.io.{File, PrintWriter}
+
+import scala.io.{Codec, Source}
+
+class RichFileUtil(file: File) {
+
+  def text = Source.fromFile(file)(Codec.UTF8).mkString
+
+  def lines = Source.fromFile(file)(Codec.UTF8).getLines()
+
+  def text_=(s: String) {
+    val out = new PrintWriter(file, "UTF-8")
+    try {
+      out.print(s)
+    }
+    finally {
+      out.close
+    }
+  }
+}
+
+object RichFileUtil {
+
+  implicit def enrichFile(file: File) = new RichFileUtil(file)
+
+}
+
+
+
+import scala.reflect.runtime.universe._
+
+/**
+ * Abstract class for parameter case classes.
+ * This overrides the [[toString]] method to print all case class fields by name and value.
+ * @tparam T  Concrete parameter class.
+ */
+abstract class AbstractParams[T: TypeTag] {
+
+  private def tag: TypeTag[T] = typeTag[T]
+
+  /**
+   * Finds all case class fields in concrete class instance, and outputs them in JSON-style format:
+   * {
+   *   [field name]:\t[field value]\n
+   *   [field name]:\t[field value]\n
+   *   ...
+   * }
+   */
+  override def toString: String = {
+    val tpe = tag.tpe
+    val allAccessors = tpe.declarations.collect {
+      case m: MethodSymbol if m.isCaseAccessor => m
+    }
+    val mirror = runtimeMirror(getClass.getClassLoader)
+    val instanceMirror = mirror.reflect(this)
+    allAccessors.map { f =>
+      val paramName = f.name.toString
+      val fieldMirror = instanceMirror.reflectField(f)
+      val paramValue = fieldMirror.get
+      s"  $paramName:\t$paramValue"
+    }.mkString("{\n", ",\n", "\n}")
+  }
+}
+
+
+
+
+object DelimiterConvert {
+  val TabExpression = "\\t"
+  val PlusExpression = "\\+"
+  val DollarExpression = "\\$"
+  val LeftBracketExpression = "\\("
+  val RightBracketExpression = "\\)"
+  val StarExpression = "\\*"
+  val DotExpression = "\\."
+  val LeftSquareBracketsExpression = "\\["
+  val RightSquareBracketsExpression = "\\]"
+  val QuestionExpression = "\\?"
+  val BackslashExpression = "\\"
+  val ExponentExpression = "\\^"
+  val LeftBraceExpression = "\\{"
+  val RightBraceExpression = "\\}"
+  val VerticalLineExpression = "\\|"
+
+  def getRegExDelimiter(delimiter:String): String = {
+    var regex = delimiter
+    if (Delimiter.Tab.equals(delimiter)) {
+      regex = TabExpression
+    }
+    else if (Delimiter.Plus.equals(delimiter)) {
+      regex = PlusExpression
+    }
+    else if (Delimiter.Dollar.equals(delimiter)) {
+      regex = DollarExpression
+    }
+    else if (Delimiter.LeftBracket.equals(delimiter)) {
+      regex = LeftBracketExpression
+    }
+    else if (Delimiter.RightBracket.equals(delimiter)) {
+      regex = RightBracketExpression
+    }
+    else if (Delimiter.Star.equals(delimiter)) {
+      regex = StarExpression
+    }
+    else if (Delimiter.Dot.equals(delimiter)) {
+      regex = DotExpression
+    }
+    else if (Delimiter.LeftSquareBrackets.equals(delimiter)) {
+      regex = LeftSquareBracketsExpression
+    }
+    else if (Delimiter.RightSquareBrackets.equals(delimiter)) {
+      regex = RightSquareBracketsExpression
+    }
+    else if (Delimiter.Question.equals(delimiter)) {
+      regex = QuestionExpression
+    }
+    else if (Delimiter.Backslash.equals(delimiter)) {
+      regex = BackslashExpression
+    }
+    else if (Delimiter.Exponent.equals(delimiter)) {
+      regex = ExponentExpression
+    }
+    else if (Delimiter.LeftBrace.equals(delimiter)) {
+      regex = LeftBraceExpression
+    }
+    else if (Delimiter.RightBrace.equals(delimiter)) {
+      regex = RightBraceExpression
+    }
+    else if (Delimiter.VerticalLine.equals(delimiter)) {
+      regex = VerticalLineExpression
+    }
+    return regex
+  }
+
+  object Delimiter {
+    val Tab = "\t"
+    val Plus = "+"
+    val Dollar = "$"
+    val LeftBracket = "("
+    val RightBracket = ")"
+    val Star = "*"
+    val Dot = "."
+    val LeftSquareBrackets = "["
+    val RightSquareBrackets = "]"
+    val Question = "?"
+    val Backslash = "\\"
+    val Exponent = "^"
+    val LeftBrace = "{"
+    val RightBrace = "}"
+    val VerticalLine = "|"
+  }
+}
