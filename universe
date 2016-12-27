@@ -193,3 +193,16 @@ object DelimiterConvert {
     val VerticalLine = "|"
   }
 }
+
+
+   try{
+
+    } catch {
+      case e: Exception => {
+        logWarning(s"Invoke parameter invalid.")
+        e.printStackTrace()
+        updateStatus(Status.BAD_REQUEST)
+        return false
+      }
+    }
+
